@@ -35,8 +35,7 @@ CalFIRE/Challenge1/
 ├── 📁 scripts/                      # Deployment and utility scripts
 │   ├── deploy.py                    # Main deployment script
 │   ├── run_tests.py                 # Test runner script
-│   ├── sample_data_generator.py     # Sample data generation
-│   └── setup_deployment.py          # Original deployment script
+│   └── sample_data_generator.py     # Sample data generation
 ├── 📁 data/                         # Data files
 │   ├── 📁 sample/                   # Sample data for testing
 │   │   ├── fire_perimeters_sample.geojson
@@ -48,6 +47,8 @@ CalFIRE/Challenge1/
 ├── 📁 tests/                        # Test files
 │   ├── 📁 unit/                     # Unit tests
 │   └── 📁 integration/              # Integration tests
+├── PRODUCTION_DEPLOYMENT_GUIDE.md   # Production deployment guide
+├── Makefile                         # Easy command execution
 └── README.md                        # This file
 ```
 
@@ -69,13 +70,13 @@ pip install -r config/requirements.txt
 # Edit config/pipeline_config.yaml with your preferences
 ```
 
-### 3. Quick Setup (Recommended)
+### 3. Production Deployment (Recommended)
 ```bash
-# Run complete setup
-make setup
+# Deploy to production
+python scripts/deploy.py
 ```
 
-### 4. Manual Steps (Alternative)
+### 4. Development Setup (Alternative)
 ```bash
 # Generate sample data
 make generate-data
@@ -83,8 +84,8 @@ make generate-data
 # Run validation
 make validate
 
-# Deploy pipeline
-make deploy
+# Start monitoring dashboard
+make monitor
 ```
 
 ## 📊 Key Features

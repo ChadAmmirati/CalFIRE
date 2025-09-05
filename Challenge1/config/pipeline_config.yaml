@@ -1,24 +1,63 @@
-# Pipeline Configuration
-# Main configuration for the CalFIRE data pipeline
+# Production Pipeline Configuration - CalFIRE Data Pipeline
+# This configuration is optimized for production deployment with comprehensive monitoring
 
 pipeline:
   name: "calfire_wildfire_pipeline"
-  description: "CalFIRE wildfire data ingestion and processing pipeline"
-  version: "1.0.0"
+  description: "CalFIRE wildfire data ingestion and processing pipeline - Production Ready"
+  version: "2.0.0"
   environment: "production"
+  owner: "CalFIRE Data Team"
+  contact: "data-team@calfire.gov"
+
+# Compute Configuration
+compute:
+  type: "serverless"  # Default to serverless, fallback to classic if needed
+  serverless:
+    warehouse_size: "2X-Small"
+    auto_stop_minutes: 10
+    max_num_clusters: 1
+    min_num_clusters: 0
+    enable_photon: true
+    enable_serverless_compute: true
+    channel: "CHANNEL_NAME_CURRENT"
+    warehouse_type: "PRO"
+  classic:
+    node_type_id: "i3.xlarge"
+    driver_node_type_id: "i3.xlarge"
+    num_workers: 2
+    min_workers: 1
+    max_workers: 8
+    auto_termination_minutes: 20
+    enable_autoscaling: true
+    runtime_version: "13.3.x-scala2.12"
 
 # Scheduling Configuration
 schedule:
   batch_processing: "0 0 * * *"  # Daily at midnight
   api_processing: "0 */6 * * *"  # Every 6 hours
   streaming_processing: "continuous"  # Real-time
+  weather_data: "0 * * * *"  # Every hour
+  reference_data: "0 0 1 * *"  # Monthly
 
 # Performance Configuration
 performance:
   max_retries: 3
-  timeout_minutes: 60
-  batch_size: 1000
+  timeout_minutes: 120
+  batch_size: 10000  # Increased for production
   parallel_jobs: 4
+  enable_adaptive_query_execution: true
+  enable_dynamic_partition_pruning: true
+  enable_auto_compaction: true
+  enable_auto_optimize: true
+  spark_conf:
+    "spark.databricks.delta.optimizeWrite.enabled": "true"
+    "spark.databricks.delta.autoCompact.enabled": "true"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.sql.adaptive.skewJoin.enabled": "true"
+    "spark.sql.adaptive.localShuffleReader.enabled": "true"
+    "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
+    "spark.sql.execution.arrow.pyspark.enabled": "true"
 
 # Monitoring Configuration
 monitoring:
@@ -26,13 +65,37 @@ monitoring:
   alerting_enabled: true
   metrics_retention_days: 90
   log_level: "INFO"
+  serverless_monitoring: true
+  enable_workflow_monitoring: true
+  enable_cluster_monitoring: true
+  enable_job_monitoring: true
+  enable_audit_logs: true
+  monitoring_interval_minutes: 5
 
 # Data Quality Configuration
 data_quality:
   validation_enabled: true
   quarantine_enabled: true
-  quality_threshold: 80.0
+  quality_threshold: 85.0  # Higher threshold for production
   auto_retry_failed_records: true
+  enable_schema_evolution: true
+  enable_data_profiling: true
+  validation_rules:
+    fire_perimeters:
+      - "fire_year >= 1950 AND fire_year <= 2025"
+      - "acres >= 0"
+      - "latitude BETWEEN 32.5 AND 42.0"
+      - "longitude BETWEEN -124.5 AND -114.0"
+      - "fire_name IS NOT NULL"
+    damage_inspection:
+      - "inspection_date IS NOT NULL"
+      - "damage_level IS NOT NULL"
+      - "latitude BETWEEN 32.5 AND 42.0"
+      - "longitude BETWEEN -124.5 AND -114.0"
+    fire_incidents:
+      - "incident_date IS NOT NULL"
+      - "latitude BETWEEN 32.5 AND 42.0"
+      - "longitude BETWEEN -124.5 AND -114.0"
 
 # Geospatial Configuration
 geospatial:
@@ -41,3 +104,145 @@ geospatial:
   buffer_distance_meters: 1000.0
   enable_mosaic: true
   enable_h3: true
+  serverless_optimized: true
+  enable_spatial_indexing: true
+  spatial_join_tolerance: 100.0  # meters
+  enable_geohash: true
+  geohash_precision: 8
+
+# Error Handling Configuration
+error_handling:
+  enable_retry_logic: true
+  max_retries: 3
+  retry_delay_seconds: 60
+  exponential_backoff: true
+  enable_dead_letter_queue: true
+  quarantine_threshold: 10  # Number of failed records before quarantine
+  enable_error_notifications: true
+  error_notification_channels:
+    - "email"
+    - "slack"
+    - "teams"
+
+# Alerting Configuration
+alerting:
+  enabled: true
+  email_notifications:
+    - "admin@calfire.gov"
+    - "data-team@calfire.gov"
+    - "operations@calfire.gov"
+  slack_webhook: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  teams_webhook: "https://your-teams-webhook-url"
+  alert_thresholds:
+    error_rate: 5.0  # Percentage
+    processing_latency: 300  # Seconds
+    data_quality_score: 80.0  # Percentage
+    storage_usage: 90.0  # Percentage
+    memory_usage: 85.0  # Percentage
+    cpu_usage: 85.0  # Percentage
+  alert_severity:
+    critical:
+      - "pipeline_failure"
+      - "data_quality_below_threshold"
+      - "storage_full"
+    warning:
+      - "high_latency"
+      - "high_error_rate"
+      - "resource_usage_high"
+    info:
+      - "pipeline_completion"
+      - "data_quality_good"
+      - "performance_metrics"
+
+# Security Configuration
+security:
+  enable_table_access_control: true
+  enable_column_level_security: true
+  enable_row_level_security: false
+  enable_audit_logging: true
+  enable_data_lineage: true
+  enable_encryption_at_rest: true
+  enable_encryption_in_transit: true
+  enable_network_rules: true
+  allowed_ip_ranges:
+    - "0.0.0.0/0"  # Restrict to your organization's IP ranges
+
+# Backup and Recovery Configuration
+backup:
+  enabled: true
+  retention_days: 30
+  backup_frequency: "daily"
+  enable_point_in_time_recovery: true
+  enable_cross_region_backup: false
+  backup_schedule: "0 2 * * *"  # Daily at 2 AM
+  backup_tables:
+    - "calfire.bronze.*"
+    - "calfire.silver.*"
+    - "calfire.gold.*"
+    - "calfire.monitoring.*"
+
+# Cost Optimization Configuration
+cost_optimization:
+  enable_auto_termination: true
+  enable_spot_instances: false
+  enable_auto_scaling: true
+  cost_alerts_enabled: true
+  monthly_budget_limit: 1000  # USD
+  enable_cost_monitoring: true
+  cost_alert_thresholds:
+    daily_limit: 50  # USD
+    weekly_limit: 300  # USD
+    monthly_limit: 1000  # USD
+
+# Data Retention Configuration
+data_retention:
+  bronze_layer_days: 90
+  silver_layer_days: 365
+  gold_layer_days: 2555  # 7 years
+  monitoring_data_days: 90
+  log_data_days: 30
+  quarantine_data_days: 30
+  enable_automatic_cleanup: true
+  cleanup_schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+
+# Pipeline Stages Configuration
+stages:
+  bronze:
+    enabled: true
+    processing_mode: "batch"
+    batch_size: 10000
+    enable_schema_evolution: true
+    enable_data_validation: true
+    quarantine_failed_records: true
+  silver:
+    enabled: true
+    processing_mode: "batch"
+    batch_size: 5000
+    enable_data_cleaning: true
+    enable_data_enrichment: true
+    enable_geospatial_processing: true
+  gold:
+    enabled: true
+    processing_mode: "batch"
+    batch_size: 1000
+    enable_aggregations: true
+    enable_analytics: true
+    enable_reporting: true
+  monitoring:
+    enabled: true
+    processing_mode: "real-time"
+    enable_metrics_collection: true
+    enable_alerting: true
+    enable_dashboard_updates: true
+
+# Lakeflow Declarative Pipeline Configuration
+lakeflow:
+  enabled: true
+  pipeline_name: "calfire_wildfire_data_pipeline"
+  description: "Comprehensive data ingestion pipeline for CalFIRE wildfire monitoring"
+  version: "2.0.0"
+  environment: "production"
+  enable_observability: true
+  enable_governance: true
+  enable_lineage: true
+  enable_quality_monitoring: true

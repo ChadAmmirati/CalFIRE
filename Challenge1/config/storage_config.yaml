@@ -1,32 +1,211 @@
-# Azure Data Lake Storage Configuration
-# Update these values with your actual storage account details
+# Production Azure Data Lake Storage Configuration - CalFIRE Data Pipeline
+# This configuration is optimized for production deployment with real CalFIRE data sources
 
 storage:
-  account_name: "calfirestorage"
+  account_name: "your-storage-account"
   container_name: "calfire-data"
   access_key: "your-access-key"
-  endpoint: "https://calfirestorage.dfs.core.windows.net"
+  endpoint: "https://your-storage-account.dfs.core.windows.net"
   
-# Storage Containers
+  # Alternative: Use Managed Identity (Recommended for Production)
+  use_managed_identity: true
+  managed_identity_client_id: "your-managed-identity-client-id"
+  
+  # Alternative: Use Service Principal
+  use_service_principal: false
+  service_principal_client_id: "your-service-principal-client-id"
+  service_principal_client_secret: "your-service-principal-secret"
+  tenant_id: "your-tenant-id"
+
+# Storage Containers Configuration
 containers:
   raw: "raw-data"
   bronze: "bronze-layer"
   silver: "silver-layer"
   gold: "gold-layer"
   quarantine: "quarantine-data"
+  staging: "staging-data"
+  backup: "backup-data"
+  logs: "pipeline-logs"
 
-# Data Sources Configuration
+# Real CalFIRE Data Sources Configuration
 data_sources:
+  # California Fire Perimeters - Historical Data
   fire_perimeters:
+    name: "california_fire_perimeters"
+    source_type: "batch"
+    source_url: "https://data.ca.gov/dataset/california-fire-perimeters-all"
+    download_url: "https://data.ca.gov/dataset/california-fire-perimeters-all/resource/8c1b0b1a-1b2c-3d4e-5f6g-7h8i9j0k1l2m"
+    file_format: "geojson"
+    update_frequency: "monthly"
     path: "raw/fire-perimeters/"
-    formats: ["geojson", "csv", "kml"]
-    schedule: "0 0 * * *"  # Daily
+    schedule: "0 0 1 * *"  # First day of each month
+    authentication:
+      type: "public"  # Public dataset, no auth required
+    schema_evolution: true
+    validation_rules:
+      - "fire_year >= 1950 AND fire_year <= 2025"
+      - "acres >= 0"
+      - "latitude BETWEEN 32.5 AND 42.0"
+      - "longitude BETWEEN -124.5 AND -114.0"
     
+  # CalFIRE Damage Inspection Data - Real-time API
   damage_inspection:
+    name: "calfire_damage_inspection"
+    source_type: "api"
     api_endpoint: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/CALFIRE_Damage_Inspection/FeatureServer/0/query"
+    method: "GET"
+    authentication:
+      type: "public"  # Public API, no auth required
+    parameters:
+      where: "1=1"
+      outFields: "*"
+      f: "json"
+      resultRecordCount: 1000
+    update_frequency: "real-time"
     schedule: "0 */6 * * *"  # Every 6 hours
+    retry_policy:
+      max_retries: 3
+      backoff_factor: 2
+      timeout_seconds: 30
+    validation_rules:
+      - "inspection_date IS NOT NULL"
+      - "damage_level IS NOT NULL"
+      - "latitude BETWEEN 32.5 AND 42.0"
+      - "longitude BETWEEN -124.5 AND -114.0"
     
-  fire_alerts:
+  # CalFIRE Fire Incidents - Real-time API
+  fire_incidents:
+    name: "calfire_fire_incidents"
+    source_type: "api"
+    api_endpoint: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/CALFIRE_Fire_Incidents/FeatureServer/0/query"
+    method: "GET"
+    authentication:
+      type: "public"
+    parameters:
+      where: "1=1"
+      outFields: "*"
+      f: "json"
+      resultRecordCount: 1000
+    update_frequency: "real-time"
+    schedule: "0 */2 * * *"  # Every 2 hours
+    retry_policy:
+      max_retries: 3
+      backoff_factor: 2
+      timeout_seconds: 30
+    
+  # CalFIRE Fire Stations - Reference Data
+  fire_stations:
+    name: "calfire_fire_stations"
+    source_type: "api"
+    api_endpoint: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/CALFIRE_Fire_Stations/FeatureServer/0/query"
+    method: "GET"
+    authentication:
+      type: "public"
+    parameters:
+      where: "1=1"
+      outFields: "*"
+      f: "json"
+      resultRecordCount: 1000
+    update_frequency: "monthly"
+    schedule: "0 0 1 * *"  # First day of each month
+    
+  # Weather Data - External API (NOAA)
+  weather_data:
+    name: "noaa_weather_data"
+    source_type: "api"
+    api_endpoint: "https://api.weather.gov/stations"
+    method: "GET"
+    authentication:
+      type: "api_key"
+      api_key: "your-noaa-api-key"
+    update_frequency: "hourly"
+    schedule: "0 * * * *"  # Every hour
+    retry_policy:
+      max_retries: 3
+      backoff_factor: 2
+      timeout_seconds: 30
+    
+  # Simulated IoT/Streaming Data (for demonstration)
+  fire_alerts_stream:
+    name: "fire_alerts_stream"
+    source_type: "streaming"
     kafka_endpoint: "kafka-cluster:9092"
     topic: "fire-alerts"
     real_time: true
+    schema:
+      alert_id: "string"
+      fire_id: "string"
+      alert_type: "string"
+      severity: "string"
+      latitude: "double"
+      longitude: "double"
+      timestamp: "timestamp"
+      description: "string"
+
+# Data Lake Storage Configuration
+data_lake:
+  enable_hierarchical_namespace: true
+  enable_soft_delete: true
+  soft_delete_retention_days: 30
+  enable_versioning: true
+  max_versions: 10
+  enable_change_feed: true
+  enable_immutable_storage: false  # Set to true for compliance if needed
+
+# Security Configuration
+security:
+  enable_encryption_at_rest: true
+  enable_encryption_in_transit: true
+  enable_network_rules: true
+  allowed_ip_ranges:
+    - "0.0.0.0/0"  # Restrict to your organization's IP ranges
+  enable_private_endpoints: false  # Set to true for enhanced security
+  enable_azure_ad_integration: true
+  enable_rbac: true
+
+# Performance Configuration
+performance:
+  enable_azure_files: false
+  enable_premium_tier: false  # Set to true for high-performance workloads
+  enable_cool_tier: true
+  enable_archive_tier: false
+  enable_lifecycle_management: true
+  lifecycle_rules:
+    - name: "move_to_cool"
+      condition: "age > 30"
+      action: "move_to_cool"
+    - name: "delete_old_logs"
+      condition: "age > 90"
+      action: "delete"
+
+# Monitoring Configuration
+monitoring:
+  enable_storage_analytics: true
+  enable_metrics: true
+  enable_logging: true
+  log_retention_days: 90
+  metrics_retention_days: 90
+  enable_alerts: true
+  alert_thresholds:
+    storage_usage_percentage: 85
+    request_failure_rate: 5
+    latency_p95: 1000  # milliseconds
+
+# Backup Configuration
+backup:
+  enabled: true
+  backup_frequency: "daily"
+  retention_days: 30
+  enable_cross_region_replication: false
+  enable_point_in_time_recovery: true
+  backup_schedule: "0 2 * * *"  # Daily at 2 AM
+
+# Cost Optimization
+cost_optimization:
+  enable_auto_tiering: true
+  enable_lifecycle_management: true
+  enable_compression: true
+  enable_deduplication: true
+  cost_alerts_enabled: true
+  monthly_budget_limit: 500  # USD

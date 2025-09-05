@@ -39,15 +39,37 @@ The CalFIRE Data Ingestion Pipeline is a comprehensive solution for ingesting, p
 CalFIRE/Challenge1/
 ├── 📁 src/                    # Source code
 │   ├── 📁 pipeline/           # Main pipeline components
+│   │   └── lakeflow_pipeline.py  # Lakeflow Declarative Pipeline
 │   ├── 📁 connectors/         # Data source connectors
+│   │   └── data_connectors.py    # Source adapters and connectors
 │   ├── 📁 processing/         # Data processing modules
+│   │   ├── geospatial_processing.py  # Geospatial operations
+│   │   └── error_handling_framework.py  # Error handling & validation
 │   ├── 📁 monitoring/         # Monitoring and dashboards
+│   │   └── monitoring_dashboard.py  # Streamlit monitoring dashboard
 │   └── 📁 validation/         # Testing and validation
+│       └── pipeline_validation.py  # Comprehensive validation script
 ├── 📁 config/                 # Configuration files
+│   ├── databricks_config.yaml     # Databricks workspace config
+│   ├── storage_config.yaml        # Azure storage config
+│   ├── pipeline_config.yaml       # Pipeline configuration
+│   └── requirements.txt           # Python dependencies
 ├── 📁 docs/                   # Documentation
+│   ├── 📁 architecture/       # Architecture documentation
+│   └── 📁 user_guides/        # User documentation
 ├── 📁 scripts/                # Deployment and utility scripts
+│   ├── deploy.py              # Main deployment script
+│   ├── run_tests.py           # Test runner script
+│   └── sample_data_generator.py  # Sample data generation
 ├── 📁 data/                   # Data files (sample and output)
-└── 📁 tests/                  # Test files
+│   ├── 📁 sample/             # Sample data for testing
+│   └── 📁 output/             # Output files
+├── 📁 tests/                  # Test files
+│   ├── 📁 unit/               # Unit tests
+│   └── 📁 integration/        # Integration tests
+├── PRODUCTION_DEPLOYMENT_GUIDE.md  # Production deployment guide
+├── README.md                  # Main project README
+└── Makefile                   # Easy command execution
 ```
 
 ---
@@ -72,36 +94,57 @@ Before you begin, ensure you have:
    cd CalFIRE/Challenge1
    ```
 
-2. **Run Complete Setup**
+2. **Configure Your Environment**
    ```bash
-   make setup
+   # Edit configuration files with your credentials
+   nano config/databricks_config.yaml
+   nano config/storage_config.yaml
+   ```
+
+3. **Deploy to Production**
+   ```bash
+   # Run the deployment script
+   python scripts/deploy.py
    ```
    This will:
-   - Install dependencies
-   - Generate sample data
-   - Run validation tests
+   - Validate your configuration
+   - Set up Azure storage containers
+   - Create Databricks compute resources (serverless by default)
+   - Deploy the Lakeflow Declarative Pipeline
+   - Create monitoring dashboards
+   - Run initial data load
 
-3. **Verify Everything Works**
+4. **Verify Everything Works**
    ```bash
    make test
    ```
 
-4. **View Results**
+5. **View Results**
    ```bash
    # Check validation results
    cat data/output/validation_report.json
    
    # View sample data
    ls -la data/sample/
+   
+   # Access your deployed pipeline
+   # You'll receive URLs to:
+   # - Databricks workspace
+   # - Pipeline workflows
+   # - Monitoring dashboard
    ```
 
 ### What Just Happened?
 
-The setup process:
-- ✅ Installed all required Python packages
-- ✅ Generated realistic sample data (fire perimeters, damage inspections, alerts)
-- ✅ Validated all pipeline components
-- ✅ Confirmed everything is working correctly
+The deployment process:
+- ✅ Validated your configuration
+- ✅ Set up Azure storage containers
+- ✅ Created Databricks compute resources (serverless by default)
+- ✅ Set up Unity Catalog with bronze/silver/gold schemas
+- ✅ Deployed the Lakeflow Declarative Pipeline
+- ✅ Created monitoring dashboards
+- ✅ Ran initial data load with real CalFIRE data
+- ✅ Validated the entire deployment
 
 ---
 
@@ -206,6 +249,11 @@ databricks:
   access_token: "your-access-token"
   catalog_name: "calfire"
   schema_name: "production"
+  
+  # Serverless Configuration (Default)
+  compute_type: "serverless"
+  sql_warehouse_id: "auto-created"
+  sql_warehouse_name: "calfire-serverless-warehouse"
 ```
 
 **What to Change**:
@@ -217,10 +265,14 @@ databricks:
 #### 2. **Storage Configuration** (`config/storage_config.yaml`)
 ```yaml
 storage:
-  account_name: "calfirestorage"
+  account_name: "your-storage-account"
   container_name: "calfire-data"
   access_key: "your-access-key"
-  endpoint: "https://calfirestorage.dfs.core.windows.net"
+  endpoint: "https://your-storage-account.dfs.core.windows.net"
+  
+  # Alternative: Use Managed Identity (Recommended)
+  use_managed_identity: true
+  managed_identity_client_id: "your-managed-identity-client-id"
 ```
 
 **What to Change**:
@@ -232,35 +284,51 @@ storage:
 ```yaml
 pipeline:
   name: "calfire_wildfire_pipeline"
-  schedule: "0 0 * * *"  # Daily at midnight
-  max_retries: 3
-  timeout_minutes: 60
+  description: "CalFIRE wildfire data ingestion pipeline"
+  version: "2.0.0"
+  environment: "production"
+  
+  # Scheduling
+  schedule:
+    batch_processing: "0 0 * * *"  # Daily at midnight
+    api_processing: "0 */6 * * *"  # Every 6 hours
+    
+  # Performance
+  performance:
+    max_retries: 3
+    timeout_minutes: 120
+    batch_size: 10000
 ```
 
 **What to Change**:
-- `schedule`: Cron expression for pipeline execution
+- `schedule`: Cron expressions for pipeline execution
 - `max_retries`: Number of retry attempts for failed operations
 - `timeout_minutes`: Maximum execution time
+- `batch_size`: Number of records to process per batch
 
 ### Environment Setup
 
-#### Option 1: Quick Setup (Recommended)
-```bash
-make setup
-```
-
-#### Option 2: Manual Setup
+#### Option 1: Production Deployment (Recommended)
 ```bash
 # 1. Install dependencies
 pip install -r config/requirements.txt
 
 # 2. Configure environment
-# Edit config files with your details
+# Edit config files with your credentials
 
-# 3. Generate sample data
+# 3. Deploy to production
+python scripts/deploy.py
+```
+
+#### Option 2: Development Setup
+```bash
+# 1. Install dependencies
+pip install -r config/requirements.txt
+
+# 2. Generate sample data
 make generate-data
 
-# 4. Run validation
+# 3. Run validation
 make validate
 ```
 
@@ -289,11 +357,12 @@ The repository includes a Makefile for easy command execution:
 
 ```bash
 make help          # Show all available commands
-make setup         # Complete setup (install + generate data + validate)
+make install       # Install Python dependencies
 make test          # Run all tests
 make validate      # Run validation only
-make deploy        # Deploy pipeline
+make deploy        # Deploy production pipeline
 make generate-data # Generate sample data
+make monitor       # Start monitoring dashboard
 make clean         # Clean up files
 ```
 
@@ -318,22 +387,26 @@ make generate-data
 
 ### Deploying the Pipeline
 
-#### Deploy to Databricks
+#### Deploy to Production
 ```bash
 make deploy
 ```
 
 This will:
-1. Load configuration files
-2. Create Databricks catalog and schemas
-3. Deploy notebooks to workspace
-4. Create scheduled jobs
-5. Validate deployment
+1. Validate your configuration
+2. Set up Azure storage containers
+3. Create Databricks compute resources (serverless by default)
+4. Set up Unity Catalog with bronze/silver/gold schemas
+5. Deploy the Lakeflow Declarative Pipeline
+6. Create monitoring dashboards
+7. Run initial data load
+8. Validate the deployment
 
 #### Manual Deployment Steps
 ```bash
-# 1. Configure Databricks CLI
-databricks configure --token
+# 1. Configure your environment
+# Edit config/databricks_config.yaml with your credentials
+# Edit config/storage_config.yaml with your Azure details
 
 # 2. Deploy using script
 python3 scripts/deploy.py
@@ -341,8 +414,9 @@ python3 scripts/deploy.py
 # 3. Verify deployment
 # Check your Databricks workspace for:
 # - New catalog: calfire
-# - Schemas: bronze, silver, gold, monitoring
-# - Jobs: calfire_wildfire_pipeline
+# - Schemas: bronze, silver, gold, monitoring, quarantine
+# - Lakeflow Declarative Pipeline: calfire_wildfire_data_pipeline
+# - Serverless SQL Warehouse: calfire-serverless-warehouse
 ```
 
 ### Monitoring the Pipeline
@@ -350,6 +424,8 @@ python3 scripts/deploy.py
 #### Access Monitoring Dashboard
 ```bash
 # Start Streamlit dashboard
+make monitor
+# or
 streamlit run src/monitoring/monitoring_dashboard.py
 ```
 

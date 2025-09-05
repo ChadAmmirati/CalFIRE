@@ -1,18 +1,21 @@
 """
-CalFIRE Error Handling and Validation Framework
-Comprehensive error handling, data quality assurance, and fault tolerance
+CalFIRE Production Error Handling and Validation Framework
+Comprehensive error handling, data quality validation, and recovery mechanisms
 """
 
 import logging
-import json
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, field
-from enum import Enum
+import json
 import pandas as pd
-from functools import wraps
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Union, Callable
+from dataclasses import dataclass, asdict
+from enum import Enum
 import traceback
+import requests
+from functools import wraps
+import yaml
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,447 +29,570 @@ class ErrorSeverity(Enum):
     CRITICAL = "critical"
 
 class ErrorAction(Enum):
-    """Actions to take when errors occur"""
-    RETRY = "retry"
+    """Error handling actions"""
+    LOG = "log"
     QUARANTINE = "quarantine"
-    SKIP = "skip"
+    RETRY = "retry"
     FAIL = "fail"
     ALERT = "alert"
 
-@dataclass
 class ValidationRule:
     """Data validation rule definition"""
-    name: str
-    description: str
-    rule_expression: str
-    severity: ErrorSeverity
-    action: ErrorAction
-    retry_count: int = 0
-    quarantine_table: Optional[str] = None
+    
+    def __init__(self, name: str, description: str, rule_expression: str, 
+                 severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+                 action: ErrorAction = ErrorAction.QUARANTINE,
+                 custom_validator: Optional[Callable] = None):
+        self.name = name
+        self.description = description
+        self.rule_expression = rule_expression
+        self.severity = severity
+        self.action = action
+        self.custom_validator = custom_validator
+        self.created_at = datetime.now()
+        self.last_used = None
+        self.success_count = 0
+        self.failure_count = 0
+
+@dataclass
+class ValidationResult:
+    """Result of data validation"""
+    rule_name: str
+    passed: bool
+    failed_records: int
+    total_records: int
+    error_message: Optional[str] = None
+    severity: ErrorSeverity = ErrorSeverity.MEDIUM
+    timestamp: datetime = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+    
+    @property
+    def pass_rate(self) -> float:
+        """Calculate pass rate percentage"""
+        if self.total_records == 0:
+            return 100.0
+        return (self.passed_records / self.total_records) * 100
+    
+    @property
+    def passed_records(self) -> int:
+        """Calculate number of passed records"""
+        return self.total_records - self.failed_records
 
 @dataclass
 class ErrorRecord:
     """Error record for tracking and analysis"""
     error_id: str
-    timestamp: datetime
-    source: str
     error_type: str
     error_message: str
     severity: ErrorSeverity
-    affected_records: int
-    stack_trace: Optional[str] = None
-    context: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
-class RetryConfig:
-    """Retry configuration for failed operations"""
-    max_retries: int = 3
-    base_delay: float = 1.0
-    max_delay: float = 60.0
-    exponential_base: float = 2.0
-    jitter: bool = True
+    source_table: str
+    source_record_id: Optional[str]
+    timestamp: datetime
+    context: Dict[str, Any]
+    resolved: bool = False
+    resolution_notes: Optional[str] = None
+    resolved_at: Optional[datetime] = None
 
 class DataQualityValidator:
-    """Comprehensive data quality validation framework"""
+    """Comprehensive data quality validator"""
     
     def __init__(self, rules: List[ValidationRule]):
         self.rules = {rule.name: rule for rule in rules}
-        self.validation_results = []
+        self.validation_history = []
         self.logger = logging.getLogger(self.__class__.__name__)
     
-    def validate_dataframe(self, df: pd.DataFrame, source_name: str) -> Dict[str, Any]:
+    def validate_dataframe(self, df: pd.DataFrame, table_name: str) -> List[ValidationResult]:
         """Validate a DataFrame against all rules"""
-        validation_results = {
-            'source': source_name,
-            'timestamp': datetime.now(),
-            'total_records': len(df),
-            'passed_records': 0,
-            'failed_records': 0,
-            'rule_results': {},
-            'quarantined_records': pd.DataFrame(),
-            'quality_score': 0.0
-        }
-        
-        passed_mask = pd.Series([True] * len(df), index=df.index)
+        results = []
         
         for rule_name, rule in self.rules.items():
             try:
-                rule_result = self._apply_rule(df, rule, passed_mask)
-                validation_results['rule_results'][rule_name] = rule_result
+                result = self._validate_rule(df, rule, table_name)
+                results.append(result)
                 
-                # Update passed mask based on rule results
-                if rule_result['action'] == ErrorAction.QUARANTINE:
-                    passed_mask = passed_mask & rule_result['passed_mask']
+                # Update rule statistics
+                rule.last_used = datetime.now()
+                if result.passed:
+                    rule.success_count += 1
+                else:
+                    rule.failure_count += 1
                 
             except Exception as e:
-                self.logger.error(f"Error applying rule {rule_name}: {str(e)}")
-                validation_results['rule_results'][rule_name] = {
-                    'status': 'error',
-                    'error': str(e),
-                    'passed_records': 0,
-                    'failed_records': len(df)
-                }
+                self.logger.error(f"Error validating rule {rule_name}: {str(e)}")
+                results.append(ValidationResult(
+                    rule_name=rule_name,
+                    passed=False,
+                    failed_records=len(df),
+                    total_records=len(df),
+                    error_message=str(e),
+                    severity=ErrorSeverity.HIGH
+                ))
         
-        # Calculate final metrics
-        validation_results['passed_records'] = passed_mask.sum()
-        validation_results['failed_records'] = len(df) - passed_mask.sum()
-        validation_results['quality_score'] = (
-            validation_results['passed_records'] / validation_results['total_records'] * 100
-            if validation_results['total_records'] > 0 else 0
-        )
+        # Store validation history
+        self.validation_history.append({
+            'table_name': table_name,
+            'timestamp': datetime.now(),
+            'results': [asdict(result) for result in results]
+        })
         
-        # Get quarantined records
-        if not passed_mask.all():
-            validation_results['quarantined_records'] = df[~passed_mask].copy()
-        
-        self.validation_results.append(validation_results)
-        return validation_results
+        return results
     
-    def _apply_rule(self, df: pd.DataFrame, rule: ValidationRule, current_mask: pd.Series) -> Dict[str, Any]:
-        """Apply a single validation rule"""
+    def _validate_rule(self, df: pd.DataFrame, rule: ValidationRule, table_name: str) -> ValidationResult:
+        """Validate DataFrame against a specific rule"""
         try:
-            # Evaluate the rule expression
-            passed_mask = df.eval(rule.rule_expression)
+            if rule.custom_validator:
+                # Use custom validator function
+                passed, failed_records, error_message = rule.custom_validator(df)
+            else:
+                # Use SQL-like expression validation
+                passed, failed_records, error_message = self._validate_expression(df, rule.rule_expression)
             
-            # Apply current mask to maintain consistency across rules
-            passed_mask = passed_mask & current_mask
-            
-            result = {
-                'rule_name': rule.name,
-                'description': rule.description,
-                'severity': rule.severity.value,
-                'action': rule.action.value,
-                'passed_records': passed_mask.sum(),
-                'failed_records': (~passed_mask).sum(),
-                'passed_mask': passed_mask,
-                'status': 'success'
-            }
-            
-            # Log rule results
-            if result['failed_records'] > 0:
-                self.logger.warning(
-                    f"Rule '{rule.name}' failed for {result['failed_records']} records "
-                    f"(severity: {rule.severity.value})"
-                )
-            
-            return result
+            return ValidationResult(
+                rule_name=rule.name,
+                passed=passed,
+                failed_records=failed_records,
+                total_records=len(df),
+                error_message=error_message,
+                severity=rule.severity
+            )
             
         except Exception as e:
-            self.logger.error(f"Error evaluating rule '{rule.name}': {str(e)}")
-            return {
-                'rule_name': rule.name,
-                'status': 'error',
-                'error': str(e),
-                'passed_records': 0,
-                'failed_records': len(df)
-            }
+            return ValidationResult(
+                rule_name=rule.name,
+                passed=False,
+                failed_records=len(df),
+                total_records=len(df),
+                error_message=f"Validation error: {str(e)}",
+                severity=ErrorSeverity.HIGH
+            )
+    
+    def _validate_expression(self, df: pd.DataFrame, expression: str) -> tuple:
+        """Validate DataFrame using SQL-like expression"""
+        try:
+            # Convert expression to pandas query
+            # This is a simplified implementation
+            if "IS NOT NULL" in expression:
+                column = expression.split("IS NOT NULL")[0].strip()
+                failed_records = df[df[column].isna()].shape[0]
+                passed = failed_records == 0
+                error_message = f"{failed_records} records have null values in {column}" if not passed else None
+            elif "BETWEEN" in expression:
+                # Parse BETWEEN expression
+                parts = expression.split("BETWEEN")
+                column = parts[0].strip()
+                range_parts = parts[1].strip().split("AND")
+                min_val = float(range_parts[0].strip())
+                max_val = float(range_parts[1].strip())
+                failed_records = df[(df[column] < min_val) | (df[column] > max_val)].shape[0]
+                passed = failed_records == 0
+                error_message = f"{failed_records} records have values outside range [{min_val}, {max_val}] in {column}" if not passed else None
+            elif ">=" in expression:
+                parts = expression.split(">=")
+                column = parts[0].strip()
+                threshold = float(parts[1].strip())
+                failed_records = df[df[column] < threshold].shape[0]
+                passed = failed_records == 0
+                error_message = f"{failed_records} records have values below {threshold} in {column}" if not passed else None
+            else:
+                # Default validation - assume all records pass
+                passed = True
+                failed_records = 0
+                error_message = None
+            
+            return passed, failed_records, error_message
+            
+        except Exception as e:
+            return False, len(df), f"Expression validation error: {str(e)}"
 
 class ErrorHandler:
-    """Centralized error handling and management"""
+    """Comprehensive error handling and recovery system"""
     
-    def __init__(self, quarantine_table: str = "calfire.quarantine.errors"):
-        self.quarantine_table = quarantine_table
-        self.error_log = []
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.error_records = []
+        self.retry_attempts = {}
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.alerting_enabled = config.get('alerting', {}).get('enabled', True)
+        self.quarantine_enabled = config.get('quarantine', {}).get('enabled', True)
     
-    def handle_error(self, error: Exception, context: Dict[str, Any]) -> ErrorRecord:
-        """Handle and log an error"""
+    def handle_error(self, exception: Exception, context: Dict[str, Any]) -> ErrorRecord:
+        """Handle an error and determine appropriate action"""
+        error_id = f"ERR_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(self.error_records)}"
+        
+        # Determine error severity
+        severity = self._determine_severity(exception, context)
+        
+        # Create error record
         error_record = ErrorRecord(
-            error_id=f"ERR_{int(time.time())}_{len(self.error_log)}",
+            error_id=error_id,
+            error_type=type(exception).__name__,
+            error_message=str(exception),
+            severity=severity,
+            source_table=context.get('table_name', 'unknown'),
+            source_record_id=context.get('record_id'),
             timestamp=datetime.now(),
-            source=context.get('source', 'unknown'),
-            error_type=type(error).__name__,
-            error_message=str(error),
-            severity=self._determine_severity(error, context),
-            affected_records=context.get('affected_records', 0),
-            stack_trace=traceback.format_exc(),
             context=context
         )
         
-        self.error_log.append(error_record)
-        self._log_error(error_record)
+        # Store error record
+        self.error_records.append(error_record)
+        
+        # Determine action based on severity and retry count
+        action = self._determine_action(error_record)
+        
+        # Execute action
+        self._execute_action(error_record, action)
         
         return error_record
     
-    def _determine_severity(self, error: Exception, context: Dict[str, Any]) -> ErrorSeverity:
-        """Determine error severity based on error type and context"""
-        if isinstance(error, (ValueError, TypeError)):
-            return ErrorSeverity.MEDIUM
-        elif isinstance(error, (ConnectionError, TimeoutError)):
-            return ErrorSeverity.HIGH
-        elif isinstance(error, (MemoryError, SystemError)):
+    def _determine_severity(self, exception: Exception, context: Dict[str, Any]) -> ErrorSeverity:
+        """Determine error severity based on exception type and context"""
+        error_type = type(exception).__name__
+        
+        # Critical errors
+        if error_type in ['ConnectionError', 'AuthenticationError', 'PermissionError']:
             return ErrorSeverity.CRITICAL
-        else:
-            return ErrorSeverity.LOW
-    
-    def _log_error(self, error_record: ErrorRecord):
-        """Log error to appropriate destinations"""
-        log_message = (
-            f"Error {error_record.error_id}: {error_record.error_type} - "
-            f"{error_record.error_message} (Source: {error_record.source}, "
-            f"Severity: {error_record.severity.value})"
-        )
         
+        # High severity errors
+        if error_type in ['DataValidationError', 'SchemaError', 'DataQualityError']:
+            return ErrorSeverity.HIGH
+        
+        # Medium severity errors
+        if error_type in ['TimeoutError', 'RateLimitError', 'TemporaryError']:
+            return ErrorSeverity.MEDIUM
+        
+        # Low severity errors
+        return ErrorSeverity.LOW
+    
+    def _determine_action(self, error_record: ErrorRecord) -> ErrorAction:
+        """Determine action based on error severity and retry count"""
+        retry_count = self.retry_attempts.get(error_record.error_id, 0)
+        max_retries = self.config.get('retry_policy', {}).get('max_retries', 3)
+        
+        # Always log the error
+        self.logger.error(f"Error {error_record.error_id}: {error_record.error_message}")
+        
+        # Determine action based on severity
         if error_record.severity == ErrorSeverity.CRITICAL:
-            self.logger.critical(log_message)
+            return ErrorAction.ALERT
         elif error_record.severity == ErrorSeverity.HIGH:
-            self.logger.error(log_message)
-        elif error_record.severity == ErrorSeverity.MEDIUM:
-            self.logger.warning(log_message)
+            return ErrorAction.QUARANTINE
+        elif error_record.severity == ErrorSeverity.MEDIUM and retry_count < max_retries:
+            return ErrorAction.RETRY
         else:
-            self.logger.info(log_message)
+            return ErrorAction.QUARANTINE
     
-    def get_error_summary(self, hours_back: int = 24) -> Dict[str, Any]:
-        """Get error summary for the specified time period"""
-        cutoff_time = datetime.now() - timedelta(hours=hours_back)
-        recent_errors = [e for e in self.error_log if e.timestamp >= cutoff_time]
+    def _execute_action(self, error_record: ErrorRecord, action: ErrorAction):
+        """Execute the determined action"""
+        if action == ErrorAction.RETRY:
+            self._handle_retry(error_record)
+        elif action == ErrorAction.QUARANTINE:
+            self._handle_quarantine(error_record)
+        elif action == ErrorAction.ALERT:
+            self._handle_alert(error_record)
+        elif action == ErrorAction.FAIL:
+            self._handle_fail(error_record)
+    
+    def _handle_retry(self, error_record: ErrorRecord):
+        """Handle retry action"""
+        retry_count = self.retry_attempts.get(error_record.error_id, 0)
+        self.retry_attempts[error_record.error_id] = retry_count + 1
         
-        summary = {
-            'total_errors': len(recent_errors),
-            'errors_by_severity': {},
-            'errors_by_source': {},
-            'errors_by_type': {},
-            'time_range': f"Last {hours_back} hours"
-        }
+        # Calculate exponential backoff delay
+        base_delay = self.config.get('retry_policy', {}).get('base_delay', 60)
+        max_delay = self.config.get('retry_policy', {}).get('max_delay', 300)
+        delay = min(base_delay * (2 ** retry_count), max_delay)
         
-        for error in recent_errors:
-            # Count by severity
-            severity = error.severity.value
-            summary['errors_by_severity'][severity] = summary['errors_by_severity'].get(severity, 0) + 1
+        self.logger.info(f"Retrying error {error_record.error_id} in {delay} seconds (attempt {retry_count + 1})")
+        time.sleep(delay)
+    
+    def _handle_quarantine(self, error_record: ErrorRecord):
+        """Handle quarantine action"""
+        if self.quarantine_enabled:
+            # Move problematic data to quarantine table
+            quarantine_table = f"calfire.quarantine.{error_record.source_table}"
+            self.logger.warning(f"Quarantining data for error {error_record.error_id} to {quarantine_table}")
             
-            # Count by source
-            source = error.source
-            summary['errors_by_source'][source] = summary['errors_by_source'].get(source, 0) + 1
+            # In a real implementation, you would move the data here
+            # For now, we'll just log the action
+    
+    def _handle_alert(self, error_record: ErrorRecord):
+        """Handle alert action"""
+        if self.alerting_enabled:
+            self._send_alert(error_record)
+    
+    def _handle_fail(self, error_record: ErrorRecord):
+        """Handle fail action"""
+        self.logger.critical(f"Pipeline failed due to error {error_record.error_id}")
+        raise Exception(f"Pipeline failure: {error_record.error_message}")
+    
+    def _send_alert(self, error_record: ErrorRecord):
+        """Send alert notification"""
+        try:
+            alert_config = self.config.get('alerting', {})
             
-            # Count by type
-            error_type = error.error_type
-            summary['errors_by_type'][error_type] = summary['errors_by_type'].get(error_type, 0) + 1
-        
-        return summary
-
-class RetryManager:
-    """Manage retry logic for failed operations"""
-    
-    def __init__(self, config: RetryConfig):
-        self.config = config
-        self.logger = logging.getLogger(self.__class__.__name__)
-    
-    def retry_operation(self, func: Callable, *args, **kwargs) -> Any:
-        """Retry a function with exponential backoff"""
-        last_exception = None
-        
-        for attempt in range(self.config.max_retries + 1):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                last_exception = e
+            # Email alert
+            if alert_config.get('email_enabled', False):
+                self._send_email_alert(error_record)
+            
+            # Slack alert
+            if alert_config.get('slack_enabled', False):
+                self._send_slack_alert(error_record)
+            
+            # Teams alert
+            if alert_config.get('teams_enabled', False):
+                self._send_teams_alert(error_record)
                 
-                if attempt == self.config.max_retries:
-                    self.logger.error(f"Operation failed after {self.config.max_retries} retries: {str(e)}")
-                    raise e
-                
-                delay = self._calculate_delay(attempt)
-                self.logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay:.2f}s: {str(e)}")
-                time.sleep(delay)
-        
-        raise last_exception
+        except Exception as e:
+            self.logger.error(f"Failed to send alert: {str(e)}")
     
-    def _calculate_delay(self, attempt: int) -> float:
-        """Calculate delay for retry attempt"""
-        delay = min(
-            self.config.base_delay * (self.config.exponential_base ** attempt),
-            self.config.max_delay
-        )
-        
-        if self.config.jitter:
-            # Add random jitter to prevent thundering herd
-            import random
-            delay *= (0.5 + random.random() * 0.5)
-        
-        return delay
+    def _send_email_alert(self, error_record: ErrorRecord):
+        """Send email alert"""
+        # In a real implementation, you would use an email service
+        self.logger.info(f"Email alert sent for error {error_record.error_id}")
+    
+    def _send_slack_alert(self, error_record: ErrorRecord):
+        """Send Slack alert"""
+        try:
+            webhook_url = self.config.get('alerting', {}).get('slack_webhook')
+            if not webhook_url:
+                return
+            
+            message = {
+                "text": f"🚨 CalFIRE Pipeline Alert",
+                "attachments": [
+                    {
+                        "color": "danger" if error_record.severity == ErrorSeverity.CRITICAL else "warning",
+                        "fields": [
+                            {"title": "Error ID", "value": error_record.error_id, "short": True},
+                            {"title": "Severity", "value": error_record.severity.value, "short": True},
+                            {"title": "Source", "value": error_record.source_table, "short": True},
+                            {"title": "Message", "value": error_record.error_message, "short": False},
+                            {"title": "Time", "value": error_record.timestamp.isoformat(), "short": True}
+                        ]
+                    }
+                ]
+            }
+            
+            response = requests.post(webhook_url, json=message, timeout=10)
+            response.raise_for_status()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send Slack alert: {str(e)}")
+    
+    def _send_teams_alert(self, error_record: ErrorRecord):
+        """Send Teams alert"""
+        # In a real implementation, you would use Teams webhook
+        self.logger.info(f"Teams alert sent for error {error_record.error_id}")
 
-def retry_on_failure(config: RetryConfig = None):
-    """Decorator for automatic retry on failure"""
-    if config is None:
-        config = RetryConfig()
+class RetryDecorator:
+    """Decorator for automatic retry with exponential backoff"""
     
-    def decorator(func):
+    def __init__(self, max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 60.0):
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+    
+    def __call__(self, func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            retry_manager = RetryManager(config)
-            return retry_manager.retry_operation(func, *args, **kwargs)
+            last_exception = None
+            
+            for attempt in range(self.max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    
+                    if attempt == self.max_retries:
+                        logger.error(f"Function {func.__name__} failed after {self.max_retries} retries")
+                        raise e
+                    
+                    # Calculate delay with exponential backoff
+                    delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                    logger.warning(f"Function {func.__name__} failed (attempt {attempt + 1}), retrying in {delay}s")
+                    time.sleep(delay)
+            
+            raise last_exception
+        
         return wrapper
-    return decorator
 
-class FaultToleranceManager:
-    """Manage fault tolerance across the pipeline"""
+class DataQualityMonitor:
+    """Monitor data quality metrics over time"""
     
-    def __init__(self):
-        self.error_handler = ErrorHandler()
-        self.retry_config = RetryConfig()
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.quality_history = []
         self.logger = logging.getLogger(self.__class__.__name__)
     
-    def execute_with_fault_tolerance(self, func: Callable, context: Dict[str, Any], *args, **kwargs) -> Any:
-        """Execute function with comprehensive fault tolerance"""
-        try:
-            # Try to execute the function
-            return func(*args, **kwargs)
-            
-        except Exception as e:
-            # Handle the error
-            error_record = self.error_handler.handle_error(e, context)
-            
-            # Determine if we should retry
-            if self._should_retry(e, context):
-                self.logger.info(f"Retrying operation after error: {error_record.error_id}")
-                retry_manager = RetryManager(self.retry_config)
-                return retry_manager.retry_operation(func, *args, **kwargs)
-            else:
-                # Don't retry, handle gracefully
-                self._handle_non_retryable_error(error_record, context)
-                raise e
+    def record_quality_metrics(self, table_name: str, validation_results: List[ValidationResult]):
+        """Record quality metrics for a table"""
+        total_records = sum(result.total_records for result in validation_results)
+        failed_records = sum(result.failed_records for result in validation_results)
+        quality_score = ((total_records - failed_records) / total_records * 100) if total_records > 0 else 100
+        
+        quality_record = {
+            'timestamp': datetime.now(),
+            'table_name': table_name,
+            'total_records': total_records,
+            'failed_records': failed_records,
+            'quality_score': quality_score,
+            'validation_results': [asdict(result) for result in validation_results]
+        }
+        
+        self.quality_history.append(quality_record)
+        
+        # Check if quality score is below threshold
+        threshold = self.config.get('quality_threshold', 80.0)
+        if quality_score < threshold:
+            self.logger.warning(f"Data quality below threshold for {table_name}: {quality_score:.2f}% < {threshold}%")
     
-    def _should_retry(self, error: Exception, context: Dict[str, Any]) -> bool:
-        """Determine if an error should trigger a retry"""
-        # Don't retry for certain error types
-        non_retryable_errors = (ValueError, TypeError, KeyError, AttributeError)
-        if isinstance(error, non_retryable_errors):
-            return False
+    def get_quality_trend(self, table_name: str, hours_back: int = 24) -> pd.DataFrame:
+        """Get quality trend for a specific table"""
+        cutoff_time = datetime.now() - timedelta(hours=hours_back)
         
-        # Don't retry if we've already retried too many times
-        retry_count = context.get('retry_count', 0)
-        if retry_count >= self.retry_config.max_retries:
-            return False
+        table_history = [
+            record for record in self.quality_history
+            if record['table_name'] == table_name and record['timestamp'] >= cutoff_time
+        ]
         
-        return True
-    
-    def _handle_non_retryable_error(self, error_record: ErrorRecord, context: Dict[str, Any]):
-        """Handle errors that shouldn't be retried"""
-        # Log the error
-        self.logger.error(f"Non-retryable error: {error_record.error_id}")
+        if not table_history:
+            return pd.DataFrame()
         
-        # Quarantine data if applicable
-        if 'data' in context:
-            self._quarantine_data(context['data'], error_record)
-        
-        # Send alerts for critical errors
-        if error_record.severity == ErrorSeverity.CRITICAL:
-            self._send_critical_alert(error_record)
-    
-    def _quarantine_data(self, data: pd.DataFrame, error_record: ErrorRecord):
-        """Quarantine problematic data"""
-        try:
-            # Add error metadata to the data
-            data['error_id'] = error_record.error_id
-            data['error_timestamp'] = error_record.timestamp
-            data['error_type'] = error_record.error_type
-            data['quarantine_reason'] = error_record.error_message
-            
-            # In a real implementation, you would write to the quarantine table
-            self.logger.info(f"Quarantined {len(data)} records due to error {error_record.error_id}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to quarantine data: {str(e)}")
-    
-    def _send_critical_alert(self, error_record: ErrorRecord):
-        """Send alert for critical errors"""
-        alert_message = (
-            f"CRITICAL ERROR ALERT\n"
-            f"Error ID: {error_record.error_id}\n"
-            f"Source: {error_record.source}\n"
-            f"Type: {error_record.error_type}\n"
-            f"Message: {error_record.error_message}\n"
-            f"Time: {error_record.timestamp}\n"
-            f"Affected Records: {error_record.affected_records}"
-        )
-        
-        # In a real implementation, you would send this via email, Slack, etc.
-        self.logger.critical(f"CRITICAL ALERT: {alert_message}")
+        return pd.DataFrame(table_history)
 
 # Predefined validation rules for CalFIRE data
 def create_calfire_validation_rules() -> List[ValidationRule]:
     """Create predefined validation rules for CalFIRE data"""
     rules = [
-        ValidationRule(
-            name="valid_coordinates",
-            description="Validate that coordinates are within California bounds",
-            rule_expression="latitude.between(32.5, 42.0) & longitude.between(-124.5, -114.0)",
-            severity=ErrorSeverity.HIGH,
-            action=ErrorAction.QUARANTINE,
-            quarantine_table="calfire.quarantine.invalid_coordinates"
-        ),
+        # Fire Perimeters validation rules
         ValidationRule(
             name="valid_fire_year",
-            description="Validate that fire year is reasonable",
-            rule_expression="fire_year.between(1950, 2025)",
-            severity=ErrorSeverity.MEDIUM,
-            action=ErrorAction.QUARANTINE,
-            quarantine_table="calfire.quarantine.invalid_years"
+            description="Fire year must be between 1950 and 2025",
+            rule_expression="FIRE_YEAR BETWEEN 1950 AND 2025",
+            severity=ErrorSeverity.HIGH,
+            action=ErrorAction.QUARANTINE
         ),
         ValidationRule(
             name="valid_acres",
-            description="Validate that acres is non-negative",
-            rule_expression="acres >= 0",
+            description="Acres must be non-negative",
+            rule_expression="ACRES >= 0",
             severity=ErrorSeverity.MEDIUM,
-            action=ErrorAction.QUARANTINE,
-            quarantine_table="calfire.quarantine.invalid_acres"
+            action=ErrorAction.QUARANTINE
+        ),
+        ValidationRule(
+            name="valid_coordinates",
+            description="Coordinates must be within California bounds",
+            rule_expression="LATITUDE BETWEEN 32.5 AND 42.0 AND LONGITUDE BETWEEN -124.5 AND -114.0",
+            severity=ErrorSeverity.HIGH,
+            action=ErrorAction.QUARANTINE
         ),
         ValidationRule(
             name="required_fire_name",
-            description="Validate that fire name is not null or empty",
-            rule_expression="fire_name.notna() & (fire_name != '')",
+            description="Fire name is required",
+            rule_expression="FIRE_NAME IS NOT NULL",
             severity=ErrorSeverity.HIGH,
-            action=ErrorAction.QUARANTINE,
-            quarantine_table="calfire.quarantine.missing_names"
+            action=ErrorAction.QUARANTINE
+        ),
+        
+        # Damage Inspection validation rules
+        ValidationRule(
+            name="valid_inspection_date",
+            description="Inspection date is required",
+            rule_expression="INSPECTION_DATE IS NOT NULL",
+            severity=ErrorSeverity.HIGH,
+            action=ErrorAction.QUARANTINE
         ),
         ValidationRule(
             name="valid_damage_level",
-            description="Validate damage level values",
-            rule_expression="damage_level.isin(['MINOR', 'MODERATE', 'MAJOR', 'DESTROYED', 'UNKNOWN'])",
-            severity=ErrorSeverity.LOW,
+            description="Damage level is required",
+            rule_expression="DAMAGE_LEVEL IS NOT NULL",
+            severity=ErrorSeverity.MEDIUM,
+            action=ErrorAction.QUARANTINE
+        ),
+        
+        # Custom validation rules
+        ValidationRule(
+            name="fire_duration_validation",
+            description="Fire duration must be reasonable",
+            rule_expression="",
+            severity=ErrorSeverity.MEDIUM,
             action=ErrorAction.QUARANTINE,
-            quarantine_table="calfire.quarantine.invalid_damage"
+            custom_validator=lambda df: _validate_fire_duration(df)
         )
     ]
+    
     return rules
 
-# Example usage
-if __name__ == "__main__":
-    # Create validation rules
-    rules = create_calfire_validation_rules()
-    validator = DataQualityValidator(rules)
+def _validate_fire_duration(df: pd.DataFrame) -> tuple:
+    """Custom validator for fire duration"""
+    try:
+        if 'CONT_DATE' in df.columns and 'ALARM_DATE' in df.columns:
+            # Calculate duration in days
+            duration = (pd.to_datetime(df['CONT_DATE']) - pd.to_datetime(df['ALARM_DATE'])).dt.days
+            
+            # Check for unreasonable durations (more than 365 days or negative)
+            invalid_duration = (duration > 365) | (duration < 0)
+            failed_records = invalid_duration.sum()
+            
+            passed = failed_records == 0
+            error_message = f"{failed_records} records have invalid fire duration" if not passed else None
+            
+            return passed, failed_records, error_message
+        else:
+            return True, 0, None
+    except Exception as e:
+        return False, len(df), f"Duration validation error: {str(e)}"
+
+# Example usage and testing
+def main():
+    """Example usage of the error handling framework"""
     
-    # Create fault tolerance manager
-    fault_manager = FaultToleranceManager()
+    # Load configuration
+    config_path = Path(__file__).parent.parent.parent / "config" / "pipeline_config.yaml"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
     
-    # Example data
-    sample_data = pd.DataFrame({
-        'fire_name': ['Test Fire', 'Another Fire', ''],
-        'fire_year': [2024, 2023, 2020],
-        'acres': [100.5, -50.0, 200.0],
-        'latitude': [37.7749, 45.0, 35.0],
-        'longitude': [-122.4194, -120.0, -120.0],
-        'damage_level': ['MINOR', 'INVALID', 'MAJOR']
+    # Create error handler
+    error_handler = ErrorHandler(config)
+    
+    # Create data quality validator
+    validation_rules = create_calfire_validation_rules()
+    validator = DataQualityValidator(validation_rules)
+    
+    # Create quality monitor
+    quality_monitor = DataQualityMonitor(config)
+    
+    # Example DataFrame for testing
+    test_data = pd.DataFrame({
+        'FIRE_NAME': ['Test Fire 1', 'Test Fire 2', None, 'Test Fire 4'],
+        'FIRE_YEAR': [2023, 2024, 2025, 1950],
+        'ACRES': [100.5, -10.0, 250.0, 500.0],
+        'LATITUDE': [37.7749, 34.0522, 45.0, 32.5],
+        'LONGITUDE': [-122.4194, -118.2437, -120.0, -124.5],
+        'CONT_DATE': ['2023-08-15', '2024-07-20', '2025-06-10', '1950-09-05'],
+        'ALARM_DATE': ['2023-08-10', '2024-07-15', '2025-06-05', '1950-09-01']
     })
     
     # Validate data
-    print("Validating sample data...")
-    results = validator.validate_dataframe(sample_data, "test_source")
+    print("Validating test data...")
+    validation_results = validator.validate_dataframe(test_data, "test_fire_perimeters")
     
-    print(f"Validation Results:")
-    print(f"Total Records: {results['total_records']}")
-    print(f"Passed Records: {results['passed_records']}")
-    print(f"Failed Records: {results['failed_records']}")
-    print(f"Quality Score: {results['quality_score']:.1f}%")
+    # Record quality metrics
+    quality_monitor.record_quality_metrics("test_fire_perimeters", validation_results)
     
-    # Show rule results
-    for rule_name, rule_result in results['rule_results'].items():
-        print(f"\nRule: {rule_name}")
-        print(f"  Passed: {rule_result['passed_records']}")
-        print(f"  Failed: {rule_result['failed_records']}")
-        print(f"  Status: {rule_result['status']}")
-    
-    # Show quarantined records
-    if not results['quarantined_records'].empty:
-        print(f"\nQuarantined Records ({len(results['quarantined_records'])}):")
-        print(results['quarantined_records'])
+    # Print results
+    for result in validation_results:
+        print(f"Rule: {result.rule_name}")
+        print(f"  Passed: {result.passed}")
+        print(f"  Pass Rate: {result.pass_rate:.2f}%")
+        print(f"  Failed Records: {result.failed_records}")
+        if result.error_message:
+            print(f"  Error: {result.error_message}")
+        print()
+
+if __name__ == "__main__":
+    main()

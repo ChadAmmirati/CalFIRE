@@ -1,29 +1,149 @@
-# Databricks Configuration
-# Update these values with your actual Databricks workspace details
+# Production Databricks Configuration - CalFIRE Data Pipeline
+# This configuration is optimized for production deployment with serverless compute
 
 databricks:
   workspace_url: "https://your-workspace.cloud.databricks.com"
   access_token: "your-access-token"
   catalog_name: "calfire"
   schema_name: "production"
-  cluster_id: "your-cluster-id"  # Optional, for SQL warehouse
+  
+  # Serverless Configuration (Default)
+  compute_type: "serverless"
+  sql_warehouse_id: "your-sql-warehouse-id"
+  sql_warehouse_name: "calfire-serverless-warehouse"
+  
+  # Alternative: Classic Compute (if serverless not available)
+  # compute_type: "classic"
+  # cluster_id: "your-cluster-id"
+  # node_type_id: "i3.xlarge"
+  # num_workers: 2
 
 # Unity Catalog Configuration
 unity_catalog:
   enabled: true
   catalog_name: "calfire"
+  metastore_id: "your-metastore-id"  # Optional: specify if needed
   schemas:
     - "bronze"
     - "silver" 
     - "gold"
     - "monitoring"
     - "quarantine"
+    - "staging"
+
+# Serverless Compute Configuration
+serverless:
+  enabled: true
+  warehouse_size: "2X-Small"  # Options: 2X-Small, X-Small, Small, Medium, Large, X-Large, 2X-Large, 3X-Large, 4X-Large
+  auto_stop_minutes: 10  # Auto-stop after 10 minutes of inactivity
+  max_num_clusters: 1  # Maximum number of clusters
+  min_num_clusters: 0  # Minimum number of clusters
+  enable_photon: true  # Enable Photon acceleration
+  enable_serverless_compute: true  # Enable serverless compute
+  channel: "CHANNEL_NAME_CURRENT"  # Use current channel for latest features
+  warehouse_type: "PRO"  # PRO or CLASSIC
+
+# Classic Compute Configuration (Fallback)
+classic_compute:
+  enabled: false  # Set to true if serverless is not available
+  node_type_id: "i3.xlarge"
+  driver_node_type_id: "i3.xlarge"
+  num_workers: 2
+  min_workers: 1
+  max_workers: 8
+  auto_termination_minutes: 20
+  enable_autoscaling: true
+  runtime_version: "13.3.x-scala2.12"
+  spark_conf:
+    "spark.databricks.delta.optimizeWrite.enabled": "true"
+    "spark.databricks.delta.autoCompact.enabled": "true"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.databricks.cluster.profile": "serverless"
+
+# Security Configuration
+security:
+  enable_table_access_control: true
+  enable_column_level_security: true
+  enable_row_level_security: false  # Set to true if needed
+  enable_audit_logging: true
+  enable_data_lineage: true
+
+# Performance Configuration
+performance:
+  enable_delta_cache: true
+  enable_photon_acceleration: true
+  enable_adaptive_query_execution: true
+  enable_dynamic_partition_pruning: true
+  enable_auto_compaction: true
+  enable_auto_optimize: true
+
+# Monitoring Configuration
+monitoring:
+  enable_workflow_monitoring: true
+  enable_cluster_monitoring: true
+  enable_job_monitoring: true
+  enable_audit_logs: true
+  metrics_retention_days: 90
+  log_level: "INFO"
 
 # Pipeline Configuration
 pipeline:
   name: "calfire_wildfire_pipeline"
-  description: "CalFIRE wildfire data ingestion and processing pipeline"
+  description: "CalFIRE wildfire data ingestion and processing pipeline - Production"
+  version: "2.0.0"
+  environment: "production"
   schedule: "0 0 * * *"  # Daily at midnight
   max_retries: 3
-  timeout_minutes: 60
-  environment: "production"
+  timeout_minutes: 120  # Increased for production workloads
+  max_concurrent_runs: 1
+  retry_on_timeout: true
+
+# Data Quality Configuration
+data_quality:
+  validation_enabled: true
+  quarantine_enabled: true
+  quality_threshold: 85.0  # Higher threshold for production
+  auto_retry_failed_records: true
+  enable_schema_evolution: true
+  enable_data_profiling: true
+
+# Geospatial Configuration
+geospatial:
+  h3_resolution: 8
+  coordinate_system: "EPSG:4326"
+  buffer_distance_meters: 1000.0
+  enable_mosaic: true
+  enable_h3: true
+  serverless_optimized: true
+  enable_spatial_indexing: true
+
+# Alerting Configuration
+alerting:
+  enabled: true
+  email_notifications:
+    - "admin@calfire.gov"
+    - "data-team@calfire.gov"
+  slack_webhook: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  teams_webhook: "https://your-teams-webhook-url"
+  alert_thresholds:
+    error_rate: 5.0  # Percentage
+    processing_latency: 300  # Seconds
+    data_quality_score: 80.0  # Percentage
+    storage_usage: 90.0  # Percentage
+
+# Backup and Recovery
+backup:
+  enabled: true
+  retention_days: 30
+  backup_frequency: "daily"
+  enable_point_in_time_recovery: true
+  enable_cross_region_backup: false
+
+# Cost Optimization
+cost_optimization:
+  enable_auto_termination: true
+  enable_spot_instances: false  # Set to true for cost savings
+  enable_auto_scaling: true
+  cost_alerts_enabled: true
+  monthly_budget_limit: 1000  # USD

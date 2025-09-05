@@ -31,6 +31,11 @@ databricks:
   access_token: "your-access-token"
   catalog_name: "calfire"
   schema_name: "production"
+  
+  # Serverless Configuration (Default)
+  compute_type: "serverless"
+  sql_warehouse_id: "auto-created"
+  sql_warehouse_name: "calfire-serverless-warehouse"
 ```
 
 ### storage_config.yaml
@@ -45,10 +50,14 @@ databricks:
 **Example**:
 ```yaml
 storage:
-  account_name: "calfirestorage"
+  account_name: "your-storage-account"
   container_name: "calfire-data"
   access_key: "your-access-key"
-  endpoint: "https://calfirestorage.dfs.core.windows.net"
+  endpoint: "https://your-storage-account.dfs.core.windows.net"
+  
+  # Alternative: Use Managed Identity (Recommended)
+  use_managed_identity: true
+  managed_identity_client_id: "your-managed-identity-client-id"
 ```
 
 ### pipeline_config.yaml
@@ -66,10 +75,19 @@ storage:
 pipeline:
   name: "calfire_wildfire_pipeline"
   description: "CalFIRE wildfire data ingestion and processing pipeline"
-  schedule: "0 0 * * *"  # Daily at midnight
-  max_retries: 3
-  timeout_minutes: 60
+  version: "2.0.0"
   environment: "production"
+  
+  # Scheduling
+  schedule:
+    batch_processing: "0 0 * * *"  # Daily at midnight
+    api_processing: "0 */6 * * *"  # Every 6 hours
+    
+  # Performance
+  performance:
+    max_retries: 3
+    timeout_minutes: 120
+    batch_size: 10000
 ```
 
 ### requirements.txt
@@ -86,10 +104,10 @@ pipeline:
 
 ### 1. Initial Configuration
 ```bash
-# Copy and edit configuration files
-cp config/databricks_config.yaml.example config/databricks_config.yaml
-cp config/storage_config.yaml.example config/storage_config.yaml
-cp config/pipeline_config.yaml.example config/pipeline_config.yaml
+# Edit configuration files with your credentials
+nano config/databricks_config.yaml
+nano config/storage_config.yaml
+nano config/pipeline_config.yaml
 ```
 
 ### 2. Update Settings
@@ -101,7 +119,7 @@ Edit each configuration file with your specific values:
 - Update catalog and schema names as needed
 
 **storage_config.yaml**:
-- Replace `calfirestorage` with your Azure storage account name
+- Replace `your-storage-account` with your Azure storage account name
 - Replace `your-access-key` with your storage account access key
 - Update container names as needed
 
