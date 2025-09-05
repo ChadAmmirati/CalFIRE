@@ -1,0 +1,43 @@
+# Pipeline Configuration
+# Main configuration for the CalFIRE data pipeline
+
+pipeline:
+  name: "calfire_wildfire_pipeline"
+  description: "CalFIRE wildfire data ingestion and processing pipeline"
+  version: "1.0.0"
+  environment: "production"
+
+# Scheduling Configuration
+schedule:
+  batch_processing: "0 0 * * *"  # Daily at midnight
+  api_processing: "0 */6 * * *"  # Every 6 hours
+  streaming_processing: "continuous"  # Real-time
+
+# Performance Configuration
+performance:
+  max_retries: 3
+  timeout_minutes: 60
+  batch_size: 1000
+  parallel_jobs: 4
+
+# Monitoring Configuration
+monitoring:
+  dashboard_enabled: true
+  alerting_enabled: true
+  metrics_retention_days: 90
+  log_level: "INFO"
+
+# Data Quality Configuration
+data_quality:
+  validation_enabled: true
+  quarantine_enabled: true
+  quality_threshold: 80.0
+  auto_retry_failed_records: true
+
+# Geospatial Configuration
+geospatial:
+  h3_resolution: 8
+  coordinate_system: "EPSG:4326"
+  buffer_distance_meters: 1000.0
+  enable_mosaic: true
+  enable_h3: true
