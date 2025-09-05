@@ -19,7 +19,7 @@ This comprehensive guide will help you understand, use, modify, and troubleshoot
 
 ---
 
-## 🏗️ Repository Overview
+## Repository Overview
 
 ### What is This Repository?
 
@@ -52,7 +52,7 @@ CalFIRE/Challenge1/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -105,7 +105,7 @@ The setup process:
 
 ---
 
-## 💻 Understanding the Code
+## Understanding the Code
 
 ### Core Components
 
@@ -193,7 +193,7 @@ Real-time monitoring interface built with Streamlit.
 
 ---
 
-## ⚙️ Configuration and Setup
+## Configuration and Setup
 
 ### Configuration Files
 
@@ -281,7 +281,7 @@ export AZURE_STORAGE_KEY="your-storage-key"
 
 ---
 
-## 🏃‍♂️ Running the Pipeline
+## Running the Pipeline
 
 ### Available Commands
 
@@ -360,7 +360,7 @@ streamlit run src/monitoring/monitoring_dashboard.py
 
 ---
 
-## 🔧 Modifying the Code
+## Modifying the Code
 
 ### Adding New Data Sources
 
@@ -640,7 +640,7 @@ ping your-workspace.cloud.databricks.com
 
 ---
 
-## 🚀 Advanced Usage
+## Advanced Usage
 
 ### Custom Data Sources
 
@@ -733,7 +733,7 @@ def save_to_database(df: pd.DataFrame, table_name: str):
 
 ---
 
-## 👨‍💻 Development Guidelines
+## Development Guidelines
 
 ### Code Standards
 
@@ -873,7 +873,7 @@ git merge feature/new-data-source
 
 ---
 
-## 📞 Support and Resources
+## Support and Resources
 
 ### Getting Help
 
@@ -951,7 +951,7 @@ Include the following information:
 
 ---
 
-## 🎉 Conclusion
+## Conclusion
 
 This CalFIRE Data Ingestion Pipeline repository provides a comprehensive, production-ready solution for wildfire data processing. With this guide, you should be able to:
 
