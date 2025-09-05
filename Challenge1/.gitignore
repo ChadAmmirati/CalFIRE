@@ -46,13 +46,6 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Databricks
-.databricks/
-databricks-connect.json
-
-# Configuration files with secrets
-config/databricks_config.yaml
-config/storage_config.yaml
 *.env
 .env
 

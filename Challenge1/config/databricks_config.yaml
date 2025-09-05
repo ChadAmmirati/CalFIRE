@@ -1,0 +1,29 @@
+# Databricks Configuration
+# Update these values with your actual Databricks workspace details
+
+databricks:
+  workspace_url: "https://your-workspace.cloud.databricks.com"
+  access_token: "your-access-token"
+  catalog_name: "calfire"
+  schema_name: "production"
+  cluster_id: "your-cluster-id"  # Optional, for SQL warehouse
+
+# Unity Catalog Configuration
+unity_catalog:
+  enabled: true
+  catalog_name: "calfire"
+  schemas:
+    - "bronze"
+    - "silver" 
+    - "gold"
+    - "monitoring"
+    - "quarantine"
+
+# Pipeline Configuration
+pipeline:
+  name: "calfire_wildfire_pipeline"
+  description: "CalFIRE wildfire data ingestion and processing pipeline"
+  schedule: "0 0 * * *"  # Daily at midnight
+  max_retries: 3
+  timeout_minutes: 60
+  environment: "production"

@@ -1,0 +1,32 @@
+# Azure Data Lake Storage Configuration
+# Update these values with your actual storage account details
+
+storage:
+  account_name: "calfirestorage"
+  container_name: "calfire-data"
+  access_key: "your-access-key"
+  endpoint: "https://calfirestorage.dfs.core.windows.net"
+  
+# Storage Containers
+containers:
+  raw: "raw-data"
+  bronze: "bronze-layer"
+  silver: "silver-layer"
+  gold: "gold-layer"
+  quarantine: "quarantine-data"
+
+# Data Sources Configuration
+data_sources:
+  fire_perimeters:
+    path: "raw/fire-perimeters/"
+    formats: ["geojson", "csv", "kml"]
+    schedule: "0 0 * * *"  # Daily
+    
+  damage_inspection:
+    api_endpoint: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/CALFIRE_Damage_Inspection/FeatureServer/0/query"
+    schedule: "0 */6 * * *"  # Every 6 hours
+    
+  fire_alerts:
+    kafka_endpoint: "kafka-cluster:9092"
+    topic: "fire-alerts"
+    real_time: true
